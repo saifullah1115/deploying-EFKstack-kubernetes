@@ -1,0 +1,60 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fluentd-config
+  namespace: saif
+  labels:
+    k8s-app: fluentd-logging
+    version: v1
+    kubernetes.io/cluster-service: "true"
+data:
+  fluent.conf: |
+    <match kubernetes.nginx.**>
+       @type elasticsearch
+       @id out_es
+       @log_level info
+       time_key @timestamp
+       include_timestamp true
+       include_tag_key true
+       host elasticsearch.saif.svc.cluster.local
+       port 9200
+       user elastic
+       password password
+       index_name nginx-logs
+       scheme "#{ENV['FLUENT_ELASTICSEARCH_SCHEME'] || 'http'}"
+       ssl_verify false
+       reload_connections "#{ENV['FLUENT_ELASTICSEARCH_RELOAD_CONNECTIONS'] || 'true'}"
+       logstash_prefix "#{ENV['FLUENT_ELASTICSEARCH_LOGSTASH_PREFIX'] || 'logstash'}"
+       logstash_format false
+       type_name fluentd
+       <buffer>
+         flush_thread_count "#{ENV['FLUENT_ELASTICSEARCH_BUFFER_FLUSH_THREAD_COUNT'] || '8'}"
+         flush_interval "#{ENV['FLUENT_ELASTICSEARCH_BUFFER_FLUSH_INTERVAL'] || '5s'}"
+         chunk_limit_size "#{ENV['FLUENT_ELASTICSEARCH_BUFFER_CHUNK_LIMIT_SIZE'] || '2M'}"
+         queue_limit_length "#{ENV['FLUENT_ELASTICSEARCH_BUFFER_QUEUE_LIMIT_LENGTH'] || '32'}"
+         retry_max_interval "#{ENV['FLUENT_ELASTICSEARCH_BUFFER_RETRY_MAX_INTERVAL'] || '30'}"
+         retry_forever true
+       </buffer>
+    </match>
+
+    <match fluent.**>
+      @type null
+    </match>
+
+    # Target Logs (e.g., Nginx)
+    <source>
+      @type tail
+      @id in_tail_container_logs
+      path "/var/log/containers/nginx*.log"
+      pos_file "/var/log/fluentd/fluentd-nginx.log.pos"
+      time_format %Y-%m-%dT%H:%M:%S.%LZ
+      tag "kubernetes.nginx"
+      read_from_head true
+      <parse> 
+        @type regexp
+        expression /^(?<remote_ip>[^ ]*) - - \[(?<timestamp>\d{2}\/[A-Za-z]{3}\/\d{4}:\d{2}:\d{2}:\d{2} [+\-]\d{4})\] "(?<request_method>[A-Z]+) (?<path>[^ ]*) HTTP\/1\.[01]" (?<status>\d{3}) (?<size>\d+) "(?<referrer>[^"]*)" "(?<user_agent>[^"]*)"/
+        time_format '%d/%b/%Y:%H:%M:%S %z'
+        time_key timestamp
+        keep_time_key true
+      </parse>
+    </source>
